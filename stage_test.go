@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -29,6 +31,12 @@ func TestPricingEngine(t *testing.T) {
 		close(in1)
 	}()
 
+	for out := range out2 {
+		fmt.Printf("Result %v: %v\n", out, time.Now())
+	}
+
 	sg1.Wait()
+	s1.Complete()
 	sg2.Wait()
+	s2.Complete()
 }
