@@ -19,16 +19,16 @@ func TestPricingEngine(t *testing.T) {
 
 	assert.Equal(t, s2.max, 0)
 
-	sg1 := stage1.Init()
-	sg2 := stage2.Init()
+	sg1 := s1.Init()
+	sg2 := s2.Init()
 
-  go func() {
-    for i := 0; i<10000; i+1 {
-       in1 <- i
-    }
-    close(in1)
-  }()
+	go func() {
+		for i := 0; i < 10000; i = i + 1 {
+			in1 <- i
+		}
+		close(in1)
+	}()
 
-  sg1.
-
+	sg1.Wait()
+	sg2.Wait()
 }
