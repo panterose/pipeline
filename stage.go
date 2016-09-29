@@ -3,12 +3,19 @@ package main
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
+const (
+	nbworkers = 5
+)
+
+type routine func() error
+
 type Stage interface {
-	Init() *sync.WaitGroup
+	Init()
 	Accept(item int, ctx context.Context)
 	Complete()
 }
@@ -19,33 +26,35 @@ type Stage1 struct {
 	out   chan int
 }
 
-func (s *Stage1) Init() *sync.WaitGroup {
-	var grp sync.WaitGroup
-	grp.Add(5)
-	for i := 0; i < 5; i++ {
-		go func(name int) {
-			for item := range s.in {
-				fmt.Printf("Stage1 %v item %v: %v\n", name, item, time.Now())
-				s.out <- i + 1
-			}
-			grp.Done()
-		}(i)
+func (s *Stage1) Init(parent context.Context) {
+	g, ctx := errgroup.WithContext(parent)
+	for i := 0; i < nbworkers; i++ {
+		g.Go(s.engine(i, ctx))
 	}
-	return &grp
+	go s.cleaner(g)
 }
 
-func (s Stage1) Accept(item int, ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("Cancelled")
-	default:
-		fmt.Printf("Stage1 Accept %v: %v\n", item, time.Now())
-		s.in <- item
+func (s *Stage1) engine(name int, ctx context.Context) routine {
+	return func() error {
+		for item := range s.in {
+			v := name + item + 1
+
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("Cancelled1 %v", name)
+			case s.out <- v:
+				if item%100 == 0 {
+					fmt.Printf("Stage1 of %v doing %v : %v\n", name, v, time.Now())
+				}
+			}
+		}
 		return nil
 	}
 }
 
-func (s Stage1) Complete() {
+func (s *Stage1) cleaner(g *errgroup.Group) {
+	error := g.Wait()
+	fmt.Printf("Stage1 error %v : %v\n", error, time.Now())
 	close(s.out)
 }
 
@@ -55,36 +64,38 @@ type Stage2 struct {
 	out chan int
 }
 
-func (s *Stage2) Init() *sync.WaitGroup {
-	var maxi = 0
-	var grp sync.WaitGroup
-	grp.Add(5)
-	for i := 0; i < 5; i++ {
-		go func(name int) {
-			for item := range s.in {
-				maxi = max(maxi, item)
-				fmt.Printf("Stage2 %v max %v: %v\n", name, maxi, time.Now())
-				s.out <- maxi
-			}
-			grp.Done()
-		}(i)
+func (s *Stage2) Init(parent context.Context) {
+
+	g, ctx := errgroup.WithContext(parent)
+	for i := 0; i < nbworkers; i++ {
+		g.Go(s.engine(i, ctx))
 	}
-	return &grp
+
+	go s.cleaner(g)
 }
 
-func (s Stage2) Accept(item int, ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("Cancelled")
-	default:
-		fmt.Printf("Stage2 Accept %v: %v\n", item, time.Now())
-		s.in <- item
+func (s *Stage2) cleaner(g *errgroup.Group) {
+	error := g.Wait()
+	fmt.Printf("Stage2 error %v : %v\n", error, time.Now())
+	close(s.out)
+}
+
+func (s *Stage2) engine(name int, ctx context.Context) routine {
+	return func() error {
+		var maxi = 0
+		for item := range s.in {
+			maxi = max(maxi, (name+item)%100)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case s.out <- maxi:
+				if item%100 == 0 {
+					fmt.Printf("Stage2 of %v doing %v : %v\n", name, maxi, time.Now())
+				}
+			}
+		}
 		return nil
 	}
-}
-
-func (s Stage2) Complete() {
-	close(s.out)
 }
 
 func max(a, b int) int {

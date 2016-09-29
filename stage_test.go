@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -21,8 +22,10 @@ func TestPricingEngine(t *testing.T) {
 
 	assert.Equal(t, s2.max, 0)
 
-	sg1 := s1.Init()
-	sg2 := s2.Init()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	s1.Init(ctx)
+	s2.Init(ctx)
 
 	go func() {
 		for i := 0; i < 10000; i = i + 1 {
@@ -31,12 +34,13 @@ func TestPricingEngine(t *testing.T) {
 		close(in1)
 	}()
 
-	for out := range out2 {
-		fmt.Printf("Result %v: %v\n", out, time.Now())
+	for item := range out2 {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("Done : %v\n", time.Now())
+		default:
+			fmt.Printf("Result %v: %v\n", item, time.Now())
+		}
 	}
 
-	sg1.Wait()
-	s1.Complete()
-	sg2.Wait()
-	s2.Complete()
 }
