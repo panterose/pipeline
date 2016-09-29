@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	nbworkers = 5
+	nbworkers = 6
 )
 
 type routine func() error
@@ -28,7 +28,7 @@ type Stage1 struct {
 
 func (s *Stage1) Init(parent context.Context) {
 	g, ctx := errgroup.WithContext(parent)
-	for i := 0; i < nbworkers; i++ {
+	for i := 1; i < nbworkers; i++ {
 		g.Go(s.engine(i, ctx))
 	}
 	go s.cleaner(g)
@@ -67,7 +67,7 @@ type Stage2 struct {
 func (s *Stage2) Init(parent context.Context) {
 
 	g, ctx := errgroup.WithContext(parent)
-	for i := 0; i < nbworkers; i++ {
+	for i := 1; i < nbworkers; i++ {
 		g.Go(s.engine(i, ctx))
 	}
 
@@ -84,7 +84,7 @@ func (s *Stage2) engine(name int, ctx context.Context) routine {
 	return func() error {
 		var maxi = 0
 		for item := range s.in {
-			maxi = max(maxi, (name+item)%100)
+			maxi = max(maxi, (name+item)%name*10)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()

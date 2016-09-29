@@ -22,7 +22,7 @@ func TestPricingEngine(t *testing.T) {
 
 	assert.Equal(t, s2.max, 0)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	s1.Init(ctx)
 	s2.Init(ctx)
