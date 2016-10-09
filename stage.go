@@ -3,9 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
-
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -14,88 +13,138 @@ const (
 
 type routine func() error
 
-type Stage interface {
-	Init()
-	Accept(item int, ctx context.Context)
-	Complete()
+type Process interface {
+	Start()
+	Wait()
 }
 
-type Stage1 struct {
-	total int
-	in    chan int
-	out   chan int
+type Worker interface {
+	Run()
 }
 
-func (s *Stage1) Init(parent context.Context) {
-	g, ctx := errgroup.WithContext(parent)
-	for i := 0; i < nbworkers; i++ {
-		g.Go(s.engine(i, ctx))
-	}
-	go s.cleaner(g)
+type Task struct {
+	errors chan error
+	ctx    context.Context
 }
 
-func (s *Stage1) engine(name int, ctx context.Context) routine {
-	return func() error {
-		for item := range s.in {
-			v := name + item + 1
-
-			select {
-			case <-ctx.Done():
-				return fmt.Errorf("Cancelled1 %v", name)
-			case s.out <- v:
-				if item%100 == 0 {
-					fmt.Printf("Stage1 of %v doing %v : %v\n", name, v, time.Now())
-				}
-			}
-		}
-		return nil
-	}
+type Stage struct {
+	Task
+	wait *sync.WaitGroup
 }
 
-func (s *Stage1) cleaner(g *errgroup.Group) {
-	error := g.Wait()
-	fmt.Printf("Stage1 error %v : %v\n", error, time.Now())
-	close(s.out)
+type ConcurrentStage struct {
+	Stage
+	concurrency int
 }
 
-type Stage2 struct {
-	max int
+type Pipeline struct {
+	Task
+	stages []Stage
+}
+
+type Adder struct {
+	ConcurrentStage
 	in  chan int
 	out chan int
 }
 
-func (s *Stage2) Init(parent context.Context) {
-
-	g, ctx := errgroup.WithContext(parent)
-	for i := 0; i < nbworkers; i++ {
-		g.Go(s.engine(i, ctx))
-	}
-
-	go s.cleaner(g)
+type AdderWorker struct {
+	Stage
+	name int
+	in   chan int
+	out  chan int
 }
 
-func (s *Stage2) cleaner(g *errgroup.Group) {
-	error := g.Wait()
-	fmt.Printf("Stage2 error %v : %v\n", error, time.Now())
-	close(s.out)
-}
+func (a *AdderWorker) Run() {
+	a.wait.Add(1)
+	for item := range a.in {
+		v := a.name + item + 1
 
-func (s *Stage2) engine(name int, ctx context.Context) routine {
-	return func() error {
-		var maxi = 0
-		for item := range s.in {
-			maxi = max(maxi, name+(item%((name+10)*10)))
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case s.out <- maxi:
-				if item%100 == 0 {
-					fmt.Printf("Stage2 of %v doing %v : %v\n", name, item, time.Now())
-				}
+		select {
+		case <-a.ctx.Done():
+			return
+		case a.out <- v:
+			if item%100 == 0 {
+				fmt.Printf("AdderWorker of %v doing %v : %v\n", a.name, v, time.Now())
 			}
 		}
-		return nil
 	}
+	fmt.Printf("AdderWorker of %v Done: %v\n", a.name, time.Now())
+	a.wait.Done()
+}
+
+func (a *Adder) Start() {
+	a.wait.Add(1)
+	for i := 0; i < a.concurrency; i++ {
+		worker := AdderWorker{
+			Stage: Stage{
+				Task: Task{errors: a.errors, ctx: a.ctx},
+				wait: a.wait},
+			name: i,
+			in:   a.in,
+			out:  a.out}
+
+		go worker.Run()
+	}
+	a.wait.Done()
+	fmt.Printf("Leave Start() : %v\n", time.Now())
+}
+
+func (a *Adder) Wait() {
+	a.wait.Wait()
+	close(a.out)
+}
+
+type Maxer struct {
+	ConcurrentStage
+	in  chan int
+	out chan int
+}
+
+type MaxerWorker struct {
+	Stage
+	name int
+	in   chan int
+	out  chan int
+}
+
+func (m *MaxerWorker) Run() {
+	m.wait.Add(1)
+	var maxi = 0
+	for item := range m.in {
+		maxi = max(maxi, m.name+(item%((m.name+10)*10)))
+
+		select {
+		case <-m.ctx.Done():
+			return
+		case m.out <- maxi:
+			if item%100 == 0 {
+				fmt.Printf("MaxerWorker of %v doing %v : %v\n", m.name, maxi, time.Now())
+			}
+		}
+	}
+	m.wait.Done()
+}
+
+func (m *Maxer) Start() {
+	m.wait.Add(1)
+	for i := 0; i < m.concurrency; i++ {
+		worker := MaxerWorker{
+			Stage: Stage{
+				Task: Task{errors: m.errors, ctx: m.ctx},
+				wait: m.wait},
+			name: i,
+			in:   m.in,
+			out:  m.out}
+
+		go worker.Run()
+	}
+	m.wait.Done()
+}
+
+func (m *Maxer) Wait() {
+	m.wait.Wait()
+	close(m.out)
 }
 
 func max(a, b int) int {
